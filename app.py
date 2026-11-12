@@ -97,11 +97,29 @@ def apply_vehicle_policies(cursor, vehicles):
         PolicyNumber VARCHAR(80) NOT NULL,
         CoverageStart DATE NOT NULL,
         CoverageEnd DATE NOT NULL,
-        CoverageLimit DECIMAL(12,2) NOT NULL,
-        CustomerExcess DECIMAL(12,2) NOT NULL DEFAULT 0,
+        CoverageLimit DECIMAL(12,2) NULL,
+        CustomerExcess DECIMAL(12,2) NULL,
         Notes VARCHAR(500),
         FOREIGN KEY (VehicleID) REFERENCES VEHICLE(VehicleID) ON DELETE CASCADE
     ) ENGINE=InnoDB""")
+    # Existing deployments created these as required fields. Nullable values mean
+    # the insurer's limit/excess is still being confirmed, never a zero quote.
+    cursor.execute("""SELECT COLUMN_NAME, IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='VEHICLE_POLICY'
+        AND COLUMN_NAME IN ('CoverageLimit','CustomerExcess')""")
+    nullable = {row["COLUMN_NAME"]: row["IS_NULLABLE"] for row in cursor.fetchall()}
+    if nullable.get("CoverageLimit") == "NO":
+        cursor.execute("ALTER TABLE VEHICLE_POLICY MODIFY CoverageLimit DECIMAL(12,2) NULL")
+    if nullable.get("CustomerExcess") == "NO":
+        cursor.execute("ALTER TABLE VEHICLE_POLICY MODIFY CustomerExcess DECIMAL(12,2) NULL")
+    # The supplied schema stores each insurance policy against a maintenance
+    # record. Carry those actual policy dates/provider onto the matching vehicle.
+    # Financial terms remain NULL until the insurer confirms them.
+    cursor.execute("""INSERT IGNORE INTO VEHICLE_POLICY
+        (VehicleID,Provider,PolicyNumber,CoverageStart,CoverageEnd,CoverageLimit,CustomerExcess,Notes)
+        SELECT m.VehicleID,i.Provider,i.PolicyNumber,i.CoverageStart,i.CoverageEnd,NULL,NULL,
+        'Coverage limit, deductible and claim terms pending insurer confirmation.'
+        FROM INSURANCE i JOIN MAINTENANCE m ON m.MaintenanceID=i.MaintenanceID""")
     cursor.execute("SELECT * FROM VEHICLE_POLICY")
     policies = {row["VehicleID"]: row for row in cursor.fetchall()}
     for vehicle in vehicles:
@@ -573,8 +591,7 @@ def book_vehicle(vehicle_id):
                 return redirect(url_for("home"))
             cursor.execute("SELECT * FROM VEHICLE_POLICY WHERE VehicleID=%s", (vehicle_id,))
             policy = cursor.fetchone()
-            if (not policy or policy["CoverageStart"] > start or policy["CoverageEnd"] < end
-                    or policy["CoverageLimit"] is None):
+            if not policy or policy["CoverageStart"] > start or policy["CoverageEnd"] < end:
                 db.rollback(); db.close()
                 flash("This vehicle has no verified insurance covering those dates. Contact the rental office.", "error")
                 return redirect(url_for("home"))
@@ -809,10 +826,11 @@ def save_vehicle_policy(vehicle_id):
     try:
         start = date.fromisoformat(values["coverage_start"])
         end = date.fromisoformat(values["coverage_end"])
-        limit = Decimal(values["coverage_limit"])
-        excess = Decimal(values["customer_excess"])
-        if (not all(values.values()) or not values["provider"] or not values["policy_number"]
-                or start > end or limit <= 0 or excess < 0 or len(notes) > 500):
+        limit = Decimal(values["coverage_limit"]) if values["coverage_limit"] else None
+        excess = Decimal(values["customer_excess"]) if values["customer_excess"] else None
+        if (not values["provider"] or not values["policy_number"]
+                or start > end or (limit is not None and limit <= 0)
+                or (excess is not None and excess < 0) or len(notes) > 500):
             raise ValueError
         with closing(get_db_connection()) as db, closing(db.cursor()) as cursor:
             cursor.execute("SELECT VehicleID FROM VEHICLE WHERE VehicleID=%s", (vehicle_id,))
@@ -827,10 +845,10 @@ def save_vehicle_policy(vehicle_id):
                     CoverageLimit=VALUES(CoverageLimit),CustomerExcess=VALUES(CustomerExcess),Notes=VALUES(Notes)""",
                     (vehicle_id,values["provider"],values["policy_number"],start,end,limit,excess,notes))
                 db.commit()
-                flash("Insurance policy and customer accident excess saved.", "success")
+                flash("Policy saved. Any unconfirmed coverage limit or deductible remains pending; no amount is quoted.", "success")
     except (ValueError, InvalidOperation, Error):
         app.logger.exception("Could not save vehicle policy")
-        flash("Enter complete policy dates, positive coverage limit, and a valid excess amount.", "error")
+        flash("Enter the insurer, policy number, valid coverage dates, and any confirmed financial terms.", "error")
     return redirect(url_for("admin_dashboard") + "#vehicles")
 
 
