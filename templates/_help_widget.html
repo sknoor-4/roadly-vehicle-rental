@@ -1,0 +1,23 @@
+<div class="help-widget" id="help-widget">
+  <button class="help-launcher" id="help-launcher" type="button" aria-expanded="false" aria-controls="help-panel"><img class="help-bot help-bot-launcher" src="{{ url_for('static',filename='roadly-bot.svg') }}" alt=""><span>Need help?</span><span class="help-pulse"></span></button>
+  <section class="help-panel" id="help-panel" aria-label="Roadly help" hidden>
+    <header class="help-header"><img class="help-bot help-bot-header" src="{{ url_for('static',filename='roadly-bot.svg') }}" alt=""><div><strong>Roadly Help</strong><small>Bookings, payments, insurance & service</small></div><button class="help-close" id="help-close" type="button" aria-label="Close help">×</button></header>
+    <div class="help-transparency">Local support assistant. Do not enter passwords or card details.</div>
+    <div class="help-messages" id="help-messages" role="log" aria-live="polite"><div class="help-message assistant">Hi! I can help with vehicle availability, bookings, payment status, accident cover, and mechanic service.</div></div>
+    <div class="help-prompts"><button type="button" data-prompt="Which vehicles are available and when are rented vehicles expected back?">Vehicle availability</button><button type="button" data-prompt="How do accident insurance and the customer excess work?">Insurance help</button><button type="button" data-prompt="How can I request a mechanic?">Request a mechanic</button></div>
+    <form class="help-chat-form" id="help-chat-form"><input id="help-chat-input" maxlength="1000" placeholder="Ask Roadly a question…" autocomplete="off" required><button type="submit" aria-label="Send message">↑</button></form>
+    {% if session.get('customer_id') %}
+    <details class="service-request-box"><summary>Request mechanic service</summary>
+      <form action="{{ url_for('create_service_request') }}" method="post" class="service-request-form">
+        <label>Rental vehicle<select name="vehicle_id"><option value="">Other / not on this rental</option>{% for v in customer_service_vehicles %}<option value="{{ v.VehicleID }}">{{ v.Make }} {{ v.Model }} · {{ v.PlateNumber }}</option>{% endfor %}</select></label>
+        <label>Contact number<input name="phone" value="{{ customer_profile.Phone if customer_profile else '' }}" maxlength="20" required></label>
+        <label>Where should the mechanic come?<input name="service_address" value="{{ customer_profile.Address if customer_profile else '' }}" maxlength="250" required></label>
+        <label>Preferred date<input type="date" name="preferred_date" min="{{ today.isoformat() }}"></label>
+        <label>What happened?<textarea name="issue" maxlength="500" placeholder="Describe the issue and whether the vehicle can be driven safely." required></textarea></label>
+        <button class="primary-button" type="submit">Send service request</button>
+        <small>The team will contact you to confirm availability and any service charge. This form does not dispatch a mechanic automatically.</small>
+      </form>
+    </details>
+    {% else %}<div class="service-signin"><a href="{{ url_for('customer_login') }}">Sign in</a> to request a mechanic visit for a rental.</div>{% endif %}
+  </section>
+</div>
