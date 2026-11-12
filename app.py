@@ -7,7 +7,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import mysql.connector
-from flask import Flask, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, flash, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 from mysql.connector import Error
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
@@ -34,7 +34,9 @@ load_local_env()
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY", "")
 app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024
-UPLOAD_FOLDER = Path(app.root_path) / "static" / "uploads"
+UPLOAD_BASE = os.environ.get("ROADLY_UPLOAD_DIR", "").strip()
+UPLOAD_FOLDER = Path(UPLOAD_BASE) if UPLOAD_BASE else Path(app.root_path) / "static" / "uploads"
+UPLOAD_URL_PREFIX = "/uploads" if UPLOAD_BASE else "/static/uploads"
 ADMIN_USER = os.environ.get("ROADLY_ADMIN_USER", "")
 ADMIN_PASSWORD = os.environ.get("ROADLY_ADMIN_PASSWORD", "")
 MODEL_IMAGES = {
@@ -218,6 +220,18 @@ def get_db_connection():
         database=os.environ.get("DB_NAME", "VehicleRentalDB"),
         connect_timeout=5,
     )
+
+
+@app.route("/healthz")
+def health_check():
+    """Lightweight platform health check; database failures remain visible to users."""
+    return "ok", 200
+
+
+@app.route("/uploads/<path:filename>")
+def uploaded_photo(filename):
+    """Serve customer-uploaded vehicle photos from Railway's persistent volume."""
+    return send_from_directory(UPLOAD_FOLDER, filename)
 
 
 def ensure_account_table(db):
@@ -760,7 +774,7 @@ def update_vehicle_photo(vehicle_id):
         flash("Choose a valid JPG, PNG, or WEBP image.", "error")
         return redirect(url_for("admin_dashboard") + "#vehicles")
     filename = f"{uuid4().hex}{extension}"
-    image_url = f"/static/uploads/{filename}"
+    image_url = f"{UPLOAD_URL_PREFIX}/{filename}"
     saved_path = UPLOAD_FOLDER / filename
     try:
         with closing(get_db_connection()) as db, closing(db.cursor()) as cursor:
@@ -1060,4 +1074,4 @@ def mark_returned(rental_id):
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=int(os.environ.get("PORT", "5000")), debug=False)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=False)
